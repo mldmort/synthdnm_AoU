@@ -82,6 +82,35 @@ python scripts/classify.py \
     --threshold 0.5
 ```
 
+## All of Us
+
+Input is a per-chromosome trio VCF exported from the AoU v9 VDS with Hail
+(multiallelics split, FT-failed genotypes set to no-call). Expected fields:
+
+| Level | Fields |
+|---|---|
+| FORMAT | GT, GQ, AD, DP (=sum AD), AB, RGQ, FT, PS, VR (1 = from `variant_data`, 0 = from a reference block) |
+| INFO | AC, AN, AF (trio cohort), AS_VETS, VETS_MODEL, MULTIALLELIC |
+
+Reference-block calls carry only GT and GQ (banded), so most parental AD/DP
+are missing; `--aou` keeps them null rather than reading cyvcf2's missing
+sentinels as depths. There is no PL, so use a no-PL feature set. Keep
+AC/AN/AF out of the features: synthetic positives are AC=2 by construction.
+
+```bash
+# trio table with child/father/mother (+ sex) columns -> 6-column PED
+python scripts/make_ped.py --trios trios.tsv --sex sex --output trios.ped
+python scripts/swap_pedigree.py trios.ped -o trios.swapped.ped
+
+# VCF must be local and tabix-indexed (gsutil cp the .bgz and .tbi first)
+bash run_aou_extract.sh trios_chr22.vcf.bgz trios.ped chr22 output/features 4 20000000 trios.swapped.ped
+```
+
+`run_aou_extract.sh` runs `extract_dnm_features.py --aou` per 20 Mb region in
+parallel (no SLURM) and writes `<region>_real.tsv` / `<region>_synthetic.tsv`;
+omit the swapped PED to extract real putative DNMs only. A region whose output
+already exists is skipped.
+
 ## Requirements
 
 - Python 3.12+

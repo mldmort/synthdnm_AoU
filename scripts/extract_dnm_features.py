@@ -38,6 +38,9 @@ import sys
 from cyvcf2 import VCF
 import numpy as np
 
+# Extra FORMAT fields written by the AoU VDS export (see README "All of Us")
+AOU_FORMAT = ("RGQ", "VR")
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -52,10 +55,15 @@ def parse_args():
                         help="Extract real putative DNMs (no AC filter)")
     parser.add_argument("--gatk", action="store_true",
                         help="Extract GATK-specific INFO fields")
+    parser.add_argument("--aou", action="store_true",
+                        help="All of Us VDS export: extract FORMAT RGQ/VR and INFO AS_VETS/VETS_MODEL "
+                             "(instead of INFO_AQ)")
     args = parser.parse_args()
 
     if not args.real_dnms and not args.swapped_ped:
         parser.error("--swapped_ped is required unless --real_dnms is specified")
+    if args.gatk and args.aou:
+        parser.error("--gatk and --aou are mutually exclusive")
 
     return args
 
@@ -113,10 +121,28 @@ def build_trio_arrays(trios, sample_to_idx):
 
 
 def format_array(arr):
-    """Format a numpy array as comma-separated string."""
+    """Format a numpy array as comma-separated string.
+
+    cyvcf2 encodes a missing integer as -2147483648 and vector-end padding as
+    -2147483647 (missing floats are NaN). Padding is dropped, missing elements
+    become '.', and an all-missing array (e.g. AD of a reference-block call in
+    an AoU VDS export) becomes '.' so downstream ratios are null, not garbage.
+    """
     if arr is None:
         return "."
-    return ",".join(str(x) for x in arr)
+    vals = []
+    for x in arr:
+        if isinstance(x, (np.integer, int)):
+            if x == -2147483647:
+                break
+            vals.append("." if x == -2147483648 else str(int(x)))
+        elif isinstance(x, (np.floating, float)):
+            vals.append("." if np.isnan(x) or x < -1e37 else str(x))
+        else:
+            vals.append(str(x))
+    if all(v == "." for v in vals):
+        return "."
+    return ",".join(vals)
 
 
 def get_fmt_scalar(fmt_array, sample_idx):
@@ -155,7 +181,7 @@ def extract_format_fields(variant):
     in the header. Missing fields get None, which downstream functions render as '.'.
     """
     fmt = {}
-    for field in ("AD", "GQ", "PL", "DP", "AB", "FT", "PGT", "PID"):
+    for field in ("AD", "GQ", "PL", "DP", "AB", "FT", "PGT", "PID", *AOU_FORMAT):
         try:
             fmt[field] = variant.format(field)
         except Exception:
@@ -174,7 +200,17 @@ def extract_sample_features(fmt, sample_idx):
     f["FT"] = get_fmt_string(fmt["FT"], sample_idx)
     f["PGT"] = get_fmt_string(fmt["PGT"], sample_idx)
     f["PID"] = get_fmt_string(fmt["PID"], sample_idx)
+    for field in AOU_FORMAT:
+        f[field] = get_fmt_scalar(fmt[field], sample_idx)
     return f
+
+
+def aou_format_cols(cf, ff, mf):
+    """AoU FORMAT columns for one trio, in get_header() order."""
+    cols = []
+    for field in AOU_FORMAT:
+        cols.extend([str(cf[field]), str(ff[field]), str(mf[field])])
+    return cols
 
 
 def extract_features_batch(variant, valid_indices, child_indices, father_indices,
@@ -230,6 +266,10 @@ def get_info_fields(variant, alt_index, args):
         info["INFO_POSITIVE_TRAIN_SITE"] = 1 if variant.INFO.get("POSITIVE_TRAIN_SITE") is not None else 0
         info["INFO_culprit"] = variant.INFO.get("culprit", ".")
         info["INFO_VariantType"] = variant.INFO.get("VariantType", ".")
+    elif args.aou:
+        # Written per split allele by the AoU export (Number=1); never frequency
+        info["INFO_AS_VETS"] = variant.INFO.get("AS_VETS", ".")
+        info["INFO_VETS_MODEL"] = variant.INFO.get("VETS_MODEL", ".")
     else:
         aq = variant.INFO.get("AQ")
         if aq is not None:
@@ -266,6 +306,10 @@ def get_header(args):
             "INFO_DS", "INFO_NEGATIVE_TRAIN_SITE", "INFO_POSITIVE_TRAIN_SITE",
             "INFO_culprit", "INFO_VariantType",
         ])
+    elif args.aou:
+        for field in AOU_FORMAT:
+            feature_cols.extend([f"child_{field}", f"father_{field}", f"mother_{field}"])
+        feature_cols.extend(["INFO_AS_VETS", "INFO_VETS_MODEL"])
     else:
         feature_cols.append("INFO_AQ")
     feature_cols.extend(["indel_flag", "haploid_flag"])
@@ -340,6 +384,8 @@ def process_real_dnm_vectorized(variant, alt_index, allele_ac, gt_types,
             str(cf["PGT"]), str(ff["PGT"]), str(mf["PGT"]),
             str(cf["PID"]), str(ff["PID"]), str(mf["PID"]),
         ]
+        if args.aou:
+            row.extend(aou_format_cols(cf, ff, mf))
 
         for key in info:
             row.append(str(info[key]))
@@ -431,6 +477,8 @@ def process_synthetic_dnm_vectorized(variant, alt_index, allele_ac, gt_types,
             str(cf["PGT"]), str(ff["PGT"]), str(mf["PGT"]),
             str(cf["PID"]), str(ff["PID"]), str(mf["PID"]),
         ]
+        if args.aou:
+            row.extend(aou_format_cols(cf, ff, mf))
 
         for key in info:
             row.append(str(info[key]))
