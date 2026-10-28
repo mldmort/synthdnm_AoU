@@ -126,4 +126,4 @@ python scripts/train.py --input output/training_data.parquet \
 ## Requirements
 
 - Python 3.12+
-- polars, xgboost, scikit-learn, numpy, cyvcf2
+- polars, pyarrow, xgboost, scikit-learn, numpy, cyvcf2 (XGBoost needs pyarrow to read polars tables)

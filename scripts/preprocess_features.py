@@ -133,6 +133,10 @@ def read_and_sample(file_list, label, sample_per_file, seed):
         df = pl.read_csv(f, separator="\t", null_values=".",
                          infer_schema_length=10000,
                          schema_overrides=schema_overrides)
+        if len(df) == 0:
+            # Header-only region (no candidates): every column infers as String,
+            # which would break concat with populated regions
+            continue
         if sample_per_file and len(df) > sample_per_file:
             df = df.sample(n=sample_per_file, seed=seed + i)
         frames.append(df)
