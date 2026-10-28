@@ -111,16 +111,23 @@ parallel (no SLURM) and writes `<region>_real.tsv` / `<region>_synthetic.tsv`;
 omit the swapped PED to extract real putative DNMs only. A region whose output
 already exists is skipped.
 
-Then build the training table and train with the AoU feature sets (`aou`, or
-`aou_vets` to add the VETS site score). Preprocessing adds `min/max_RGQ` and
-`n_parent_VR` (parents with read-level data at the site) when the RGQ/VR
-columns are present.
+Then build the training table and train. `--max_real_ac 2` keeps only rare
+putative DNMs as negatives, matching the AC=2 synthetic positives; without it
+most negatives sit at sites carried by other families and the model learns
+frequency. With `--sample_n`, both classes are capped at the smaller one.
+
+Three AoU feature sets (see comments in `scripts/features.toml`):
+`aou_core` (child GQ/DP/AB/RGQ, parental GQ, flags), `aou_core_vets` (+ VETS
+site score) and `aou_core_vets_vr` (+ `n_parent_VR`, the number of parents
+with a variant_data record at the site).
 
 ```bash
 python scripts/preprocess_features.py --feature_dir output/features \
-    --output output/training_data.parquet --sample_n 50000 --psam trios.ped
-python scripts/train.py --input output/training_data.parquet \
-    --output_dir output/models/aou --feature_set aou --config scripts/features.toml
+    --output output/training_data.parquet --sample_n 50000 --max_real_ac 2 --psam trios.ped
+for fs in aou_core aou_core_vets aou_core_vets_vr; do
+    python scripts/train.py --input output/training_data.parquet \
+        --output_dir output/models/$fs --feature_set $fs --config scripts/features.toml
+done
 ```
 
 ## Requirements

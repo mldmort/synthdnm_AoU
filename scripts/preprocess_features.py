@@ -60,6 +60,9 @@ def parse_args():
                         help="Sample N rows per class for balanced training (default: use all)")
     parser.add_argument("--seed", type=int, default=42,
                         help="Random seed for sampling")
+    parser.add_argument("--max_real_ac", type=int, default=None,
+                        help="Keep only real putative DNMs with cohort AC <= this, applied before "
+                             "sampling (synthetic DNMs are AC=2 by construction; e.g. 2)")
     parser.add_argument("--gatk", action="store_true",
                         help="Include GATK-specific INFO fields")
     parser.add_argument("--chroms", type=str, default=None,
@@ -117,7 +120,7 @@ def get_schema_overrides():
         "child_VR", "father_VR", "mother_VR",
         "INFO_AS_VETS",
     ]
-    overrides = {}
+    overrides = {"AC": pl.Int64}
     for c in string_cols:
         overrides[c] = pl.Utf8
     for c in float_cols:
@@ -125,23 +128,30 @@ def get_schema_overrides():
     return overrides
 
 
-def read_and_sample(file_list, label, sample_per_file, seed):
-    """Read TSV files and optionally sample from each."""
+def read_and_sample(file_list, label, sample_per_file, seed, max_ac=None):
+    """Read TSV files, optionally drop rows with AC > max_ac, and sample from each."""
     schema_overrides = get_schema_overrides()
     frames = []
+    n_read = n_kept = 0
     for i, f in enumerate(file_list):
         df = pl.read_csv(f, separator="\t", null_values=".",
                          infer_schema_length=10000,
                          schema_overrides=schema_overrides)
+        n_read += len(df)
         if len(df) == 0:
             # Header-only region (no candidates): every column infers as String,
             # which would break concat with populated regions
             continue
+        if max_ac is not None:
+            df = df.filter(pl.col("AC") <= max_ac)
+        n_kept += len(df)
         if sample_per_file and len(df) > sample_per_file:
             df = df.sample(n=sample_per_file, seed=seed + i)
         frames.append(df)
         if (i + 1) % 50 == 0:
             print(f"  Read {i + 1}/{len(file_list)} files", file=sys.stderr)
+    if max_ac is not None:
+        print(f"  AC <= {max_ac}: kept {n_kept:,} of {n_read:,} rows", file=sys.stderr)
     combined = pl.concat(frames)
     combined = combined.with_columns(pl.lit(label).alias("truth"))
     return combined
@@ -484,18 +494,22 @@ def main():
     # Read and optionally sample
     print("Reading real (truth=0) features...", file=sys.stderr)
     real_df = read_and_sample(real_files, label=0,
-                              sample_per_file=sample_per_file_real, seed=args.seed)
+                              sample_per_file=sample_per_file_real, seed=args.seed,
+                              max_ac=args.max_real_ac)
 
     print("Reading synthetic (truth=1) features...", file=sys.stderr)
     synth_df = read_and_sample(synthetic_files, label=1,
                                sample_per_file=sample_per_file_synth, seed=args.seed)
 
     # Final balanced sampling to exact count
+    # (both classes capped at the smaller one, e.g. when --max_real_ac leaves
+    # fewer real rows than --sample_n; train.py uses no class weights)
     if args.sample_n:
-        if len(real_df) > args.sample_n:
-            real_df = real_df.sample(n=args.sample_n, seed=args.seed)
-        if len(synth_df) > args.sample_n:
-            synth_df = synth_df.sample(n=args.sample_n, seed=args.seed)
+        n_per_class = min(args.sample_n, len(real_df), len(synth_df))
+        if len(real_df) > n_per_class:
+            real_df = real_df.sample(n=n_per_class, seed=args.seed)
+        if len(synth_df) > n_per_class:
+            synth_df = synth_df.sample(n=n_per_class, seed=args.seed)
 
     print(f"Real: {len(real_df)} rows, Synthetic: {len(synth_df)} rows", file=sys.stderr)
 
