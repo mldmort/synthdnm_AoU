@@ -98,7 +98,7 @@ def get_schema_overrides():
         "child_FT", "father_FT", "mother_FT",
         "child_PGT", "father_PGT", "mother_PGT",
         "child_PID", "father_PID", "mother_PID",
-        "INFO_culprit", "INFO_VariantType",
+        "INFO_culprit", "INFO_VariantType", "INFO_VETS_MODEL",
         # These can be tuples for multi-allelic sites (e.g., "(0.034, 0.086)")
         "INFO_AF", "INFO_MLEAC", "INFO_MLEAF",
     ]
@@ -112,6 +112,10 @@ def get_schema_overrides():
         "INFO_ReadPosRankSum", "INFO_AN", "INFO_InbreedingCoeff",
         "INFO_ClippingRankSum", "INFO_HaplotypeScore",
         "INFO_RAW_MQ", "INFO_MQ0",
+        # All of Us (extract_dnm_features.py --aou)
+        "child_RGQ", "father_RGQ", "mother_RGQ",
+        "child_VR", "father_VR", "mother_VR",
+        "INFO_AS_VETS",
     ]
     overrides = {}
     for c in string_cols:
@@ -326,6 +330,17 @@ def compute_derived_features(df):
         pl.min_horizontal("father_DP", "mother_DP").alias("min_DP"),
         pl.max_horizontal("father_DP", "mother_DP").alias("max_DP"),
     ])
+
+    # --- All of Us: min/max parent RGQ, number of parents from variant_data ---
+    # VR=0 or null means the parent's 0/0 was filled from a reference block
+    # (GQ only, no AD/DP/RGQ); VR=1 means the parent has read-level data here.
+    if "child_RGQ" in df.columns:
+        df = df.with_columns([
+            pl.min_horizontal("father_RGQ", "mother_RGQ").alias("min_RGQ"),
+            pl.max_horizontal("father_RGQ", "mother_RGQ").alias("max_RGQ"),
+            (pl.col("father_VR").fill_null(0) + pl.col("mother_VR").fill_null(0))
+              .alias("n_parent_VR"),
+        ])
 
     # --- Parse PL into individual components ---
     # Biallelic (allele_num=1): PL0=PL[0], PL1=PL[1], PL2=PL[2]
@@ -573,11 +588,13 @@ def main():
         # Keep all three members for AB (already numeric)
         "child_AB", "father_AB", "mother_AB",
     ]
+    if "child_RGQ" in df.columns:
+        derived_cols.extend(["child_RGQ", "min_RGQ", "max_RGQ", "n_parent_VR"])
 
     info_cols = [
         "INFO_DP", "INFO_ExcessHet", "INFO_FS", "INFO_MQ", "INFO_QD",
         "INFO_SOR", "INFO_VQSLOD", "INFO_BaseQRankSum", "INFO_MQRankSum",
-        "INFO_ReadPosRankSum",
+        "INFO_ReadPosRankSum", "INFO_AS_VETS",
     ]
     if args.gatk:
         info_cols.extend([
@@ -587,6 +604,8 @@ def main():
             "INFO_DS", "INFO_NEGATIVE_TRAIN_SITE", "INFO_POSITIVE_TRAIN_SITE",
             "INFO_culprit", "INFO_VariantType",
         ])
+    # Keep only the INFO fields the extractor wrote (no GATK metrics without --gatk)
+    info_cols = [c for c in info_cols if c in df.columns]
 
     flag_cols = ["indel_flag", "haploid_flag"]
     label_col = ["truth"]

@@ -111,6 +111,18 @@ parallel (no SLURM) and writes `<region>_real.tsv` / `<region>_synthetic.tsv`;
 omit the swapped PED to extract real putative DNMs only. A region whose output
 already exists is skipped.
 
+Then build the training table and train with the AoU feature sets (`aou`, or
+`aou_vets` to add the VETS site score). Preprocessing adds `min/max_RGQ` and
+`n_parent_VR` (parents with read-level data at the site) when the RGQ/VR
+columns are present.
+
+```bash
+python scripts/preprocess_features.py --feature_dir output/features \
+    --output output/training_data.parquet --sample_n 50000 --psam trios.ped
+python scripts/train.py --input output/training_data.parquet \
+    --output_dir output/models/aou --feature_set aou --config scripts/features.toml
+```
+
 ## Requirements
 
 - Python 3.12+

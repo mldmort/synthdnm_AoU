@@ -90,6 +90,29 @@ columns = [
     "INFO_VQSLOD",          # Variant quality score from VQSR
 ]
 
+[features.aou]
+# All of Us VDS export (extract_dnm_features.py --aou). No PL; reference-block
+# parents have GQ (banded) but no AD/DP/RGQ, so parental AR/DP are mostly null.
+# Frequency (AC/AN/AF) is excluded: synthetic positives are AC=2 by construction.
+description = "AoU FORMAT features: AR, GQ, DP, AB, RGQ, parental variant_data count"
+columns = [
+    "child_AR", "min_AR", "max_AR",
+    "child_GQ", "min_GQ", "max_GQ",
+    "child_DP", "min_DP", "max_DP",
+    "child_AB",
+    "child_RGQ", "min_RGQ", "max_RGQ",
+    "n_parent_VR",
+    "indel_flag",
+    "haploid_flag",
+]
+
+[features.aou_vets]
+# Adds the allele-specific VETS site score. VETS may partly track allele
+# count, so compare against the aou set before relying on it.
+description = "AoU features + VETS calibration sensitivity"
+extends = "aou"
+columns = ["INFO_AS_VETS"]
+
 # =============================================================================
 # Sex chromosome handling
 # =============================================================================
